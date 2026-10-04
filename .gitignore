@@ -1,0 +1,12 @@
+# build output 
+website/
+.quarto/
+
+# data
+*.parquet
+
+# secrets
+keys/
+
+# personal settings
+.vscode/
