@@ -16,7 +16,10 @@ jobs:
     # Az R-scriptnek átadott futtatási beállítások
     env:
       RUN_MODE: evening
-      DRY_RUN: "true"
+      DRY_RUN: "false"
+      SMTP_USER: ${{ secrets.EMAIL }}
+      SMTP_PASSWORD: ${{ secrets.PASSWORD }}
+      EMAIL_TO: ${{ secrets.EMAILTO }}
 
     steps:
       # A repository fájljainak letöltése a futtató gépre
