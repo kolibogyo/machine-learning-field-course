@@ -1,7 +1,10 @@
 name: Weather alert
 
-# A futtatás kézi indításának engedélyezése
+# Napi automatikus indítás reggel 7-kor, valamint kézi indítás
 on:
+  schedule:
+    - cron: "0 7 * * *"
+      timezone: "Europe/Vienna"
   workflow_dispatch:
 
 # A repository tartalmának olvasási jogosultsága
@@ -15,7 +18,7 @@ jobs:
 
     # Az R-scriptnek átadott futtatási beállítások
     env:
-      RUN_MODE: evening
+      RUN_MODE: morning
       DRY_RUN: "false"
       SMTP_USER: ${{ secrets.EMAIL }}
       SMTP_PASSWORD: ${{ secrets.PASSWORD }}
