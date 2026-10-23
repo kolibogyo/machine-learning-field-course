@@ -8,7 +8,7 @@ local_timezone <- "Europe/Vienna"
 rain_threshold_mm <- 0.1
 # A futtatási mód beolvasása a környezeti beállításokból
 run_mode <- Sys.getenv("RUN_MODE", unset = "evening")
-dry_run <- TRUE
+dry_run <- <- Sys.getenv("DRY_RUN", unset = "true") != "false"
 
 # A bemutatóhoz használt tesztpéldák futtatásának beállítása
 run_tests <- FALSE
