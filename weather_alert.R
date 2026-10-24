@@ -122,13 +122,13 @@ rain_expected <- nrow(rainy_hours) > 0
 
 if (rain_expected) {
   rain_summary <- paste0(
-    "Figyelj jól kiskakukk, mert mára ennyi csapadékot jósoltak: ",
+    "Figyelj jól kiskakukk, mert mára ",
     round(total_expected_rain_mm, 1),
-    " mm."
+    " mm csapadékot jósoltak."
   )
 } else {
   rain_summary <- paste0(
-    "Nem kell esernyõ töki"
+    "Nem kell esernyõ töki! Védve vagy."
   )
 }
 
@@ -258,13 +258,18 @@ if (interactive()) {
   print(email_message)
 }
 
+# A címzettek beolvasása vesszővel elválasztott listából
+email_recipients <- trimws(
+  strsplit(Sys.getenv("EMAIL_TO"), ",", fixed = TRUE)[[1]]
+)
+
 # Az email elküldése vagy tesztüzem jelzése
 if (dry_run) {
   message("Tesztüzem: az email nem lett elküldve.")
 } else {
   blastula::smtp_send(
     email = email_message,
-    to = Sys.getenv("EMAIL_TO"),
+    to = email_recipients,
     from = Sys.getenv("SMTP_USER"),
     subject = email_subject,
     credentials = blastula::creds_envvar(
