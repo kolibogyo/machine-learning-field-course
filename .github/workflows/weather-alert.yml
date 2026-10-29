@@ -5,7 +5,12 @@ on:
   schedule:
     - cron: "0 7 * * *"
       timezone: "Europe/Vienna"
-  workflow_dispatch:
+    workflow_dispatch:
+    inputs:
+      send_test_email:
+        description: "Send a test email to my sender Gmail account"
+        type: boolean
+        default: false
 
 # A repository tartalmának olvasási jogosultsága
 permissions:
@@ -49,8 +54,32 @@ jobs:
           install-quarto: false
 
       # Az időjárásjelentő script elindítása
+            # Kézzel kiválasztott levélküldési próba
+      - name: Send test email
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.send_test_email }}
+        shell: Rscript {0}
+        run: |
+          library(blastula)
+          sender <- Sys.getenv("SMTP_USER")
+          if (!nzchar(sender) || !nzchar(Sys.getenv("SMTP_PASSWORD"))) {
+            stop("Missing EMAIL or PASSWORD repository secret.")
+          }
+          smtp_send(
+            email = compose_email(body = md("Test email from GitHub Actions.")),
+            to = sender,
+            from = sender,
+            subject = "Rain alert: Test email",
+            credentials = creds_envvar(
+              user = sender,
+              pass_envvar = "SMTP_PASSWORD",
+              provider = "gmail"
+            )
+          )
+          message("The SMTP server accepted the test email.")
+
+      # Az időjárásjelentő script elindítása
       - name: Run weather script
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.send_test_email }}
         run: |
           Rscript weather_alert.R
           cat data/rain-alert-log.txt
-      
