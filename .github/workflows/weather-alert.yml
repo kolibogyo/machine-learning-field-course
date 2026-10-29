@@ -43,6 +43,8 @@ jobs:
             any::httr
             any::jsonlite
             any::blastula
+            any::tidyverse
+            any::glue
           dependencies: 'NA'
           install-quarto: false
 

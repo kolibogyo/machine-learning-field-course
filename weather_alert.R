@@ -1,283 +1,200 @@
-#helyszin es idozona
-location_name <- "Bécs"
-latitude <- 48.2082
-longitude <- 16.3738
-local_timezone <- "Europe/Vienna"
+# weather_alert.R
+# Checks today's weather forecast for Vienna (Open-Meteo API) and sends an
+# email with a rotating greeting and the expected rain times if rain is likely.
+# Runs every morning at 07:00 Vienna time via GitHub Actions
+# (.github/workflows/weather-alert.yml).
 
-# az ertesites beallitasai
-rain_threshold_mm <- 0.1
-# A futtatási mód beolvasása a környezeti beállításokból
-run_mode <- Sys.getenv("RUN_MODE", unset = "evening")
-dry_run <- Sys.getenv("DRY_RUN", unset = "true") != "false"
+library(httr)
+library(jsonlite)
+library(tidyverse)   # includes lubridate
+library(glue)
+library(blastula)
 
-# A bemutatóhoz használt tesztpéldák futtatásának beállítása
-run_tests <- FALSE
-
-run_mode
-
-#idojarasi elorejelzes lekerese
-response <- httr::GET(
-  url = "https://api.open-meteo.com/v1/forecast",
-  query = list( latitude = latitude,
-                longitude = longitude,
-                hourly = "rain,showers",
-                timezone = local_timezone,
-                forecast_days = 2)
-)
-
-
-#keres statuszanak ellenorzese
-httr::status_code(response)
-
-#API tartalmanak beolvasasa
-response_text <- httr::content(
-  response,
-  as = "text",
-  encoding = "UTF-8"
-)
-
-forecast <- jsonlite::fromJSON(response_text)
-
-#feldolgozott valasz fo reszeinek megtekintese
-names(forecast)
-
-#az orankenti adatok mertekegysegenek ellenorzese
-forecast$hourly_units
-
-#orankenti elorejelzes tablazatba helyezese
-weather <- data.frame(
-  time = forecast$hourly$time,
-  rain_mm = forecast$hourly$rain,
-  showers_mm = forecast$hourly$showers
-)
-
-#tablazat elso sorainak megjelenitese
-head(weather)
-
-#idobelyegek atalakitasa R-ben kezelheto idopontokka
-weather$time <- as.POSIXct(
-  weather$time, 
-  format = "%Y-%m-%dT%H:%M",
-  tz = local_timezone
-)
-
-#teljes esomennyiseg kiszamitasa orankent
-weather$total_rain_mm <- weather$rain_mm + weather$showers_mm
-
-#tablazat szerkezetenek ellenorzese
-str(weather)
-
-
-#a vizsgalando nap meghatarozasa futtatasi kod alapjan
-today_local <- as.Date(Sys.time(), tz = local_timezone)
-
-if (run_mode == "evening") {
-  target_date <- today_local +1
-} else if (run_mode == "morning") {
-  target_date <- today_local
-} else {
-  stop ("A run_mode értéke evening vagy morning lehet.")
-}
-target_date
-
-#vizsgalt idoablak hatarainak meghatarozasa
-window_start <- as.POSIXct(
-  paste(target_date, "07:00:00"),
-  tz = local_timezone
-)
-window_end <- as.POSIXct(
-  paste(target_date, "22:00:00"),
-  tz = local_timezone
-)
-
-#az idoablakba tartozo es meg le nem zarult orak kivalasztasa
-day <- weather[
-  weather$time > window_start &
-    weather$time <= window_end &
-    weather$time > Sys.time(),
-]
-head(day)
-
-#esoadatok ellenorzese
-if (nrow(day) == 0 ||
-    any(!is.finite(day$total_rain_mm))||
-    any(day$total_rain_mm < 0)) {
-  stop("Hiányzó vagy hibás esőadatok érkeztek.")
+# ---- Settings -----------------------------------------------------------------
+# Email settings come from environment variables, so no address or password is
+# stored in the code: GitHub secrets on GitHub, a git-ignored .Renviron file locally.
+sender     <- Sys.getenv("SMTP_USER")                                # Gmail account that sends the alert
+recipients <- str_split_1(Sys.getenv("EMAIL_TO"), ",\\s*")  # comma-separated list
+if (sender == "" || Sys.getenv("SMTP_PASSWORD") == "" || all(recipients == "")) {
+  stop("SMTP_USER, SMTP_PASSWORD or EMAIL_TO is not set")
 }
 
-#az esos orak kivalasztasa es az osszes esomennyiseg kiszamitasa
-rainy_hours <- day[
-  day$total_rain_mm >= rain_threshold_mm,
-]
+lat <- 48.2085                  # Vienna, Stephansplatz
+lon <- 16.3721
+prob_threshold <- as.numeric(Sys.getenv("RAIN_PROB_THRESHOLD", "50"))  # rain probability in % that counts as "rain" (set 0 to test the email)
+mm_threshold   <- 0.3           # ... or this much rain in mm per hour
+day_hours      <- 7:21          # only hours you are out (07:00 to 21:59)
 
-total_expected_rain_mm <- sum(day$total_rain_mm)
+log_file     <- "data/rain-alert-log.txt"
+history_file <- "data/rain-forecasts.csv"
+dir.create("data", showWarnings = FALSE)
 
-#az eredmenyek megtekintese
-nrow(day)
-rainy_hours
-total_expected_rain_mm
-
-# Az esőjelzés és az összefoglaló szöveg elkészítése
-rain_expected <- nrow(rainy_hours) > 0
-
-if (rain_expected) {
-  rain_summary <- paste0(
-    "Figyelj jól kiskakukk, mert mára ",
-    round(total_expected_rain_mm, 1),
-    " mm csapadékot jósoltak."
-  )
-} else {
-  rain_summary <- paste0(
-    "Nem kell esernyõ töki! Védve vagy."
-  )
+write_log <- function(text) {
+  write_lines(paste(format(Sys.time(), tz = "Europe/Vienna", usetz = TRUE), text),
+              log_file, append = TRUE)
 }
 
-# Az elkészült szöveg megtekintése
-rain_summary
+get_credentials <- function() {
+  creds_envvar(user = sender, pass_envvar = "SMTP_PASSWORD", provider = "gmail")
+}
 
-# A bemutatóhoz használt tesztpéldák feltételes futtatása
-if (run_tests) {
-  
-  # Tesztadatok létrehozása az esős időszakok feldolgozásához
-  rain_test <- data.frame(
-    time = as.POSIXct(
-      paste(target_date, c("09:00:00", "10:00:00", "15:00:00")),
-      tz = local_timezone
-    ),
-    total_rain_mm = c(0.3, 0.5, 1.2)
-  )
-  
-  # Az egyes órás időszakok kezdetének kiszámítása
-  rain_test$interval_start <- rain_test$time - 3600
-  rain_test
-  
-  #az egymast koveto esos orak csoportositasa
-  time_gaps <- as.numeric(
-    diff(rain_test$time),
-    units = "hours"
-  )
-  rain_test$period_id <- cumsum(
-    c(TRUE, time_gaps > 1)
-  )
-  rain_test
-  
-  #az esos idoszakok osszevonasa es esomennyiseguk osszegzese
-  rain_periods <- data.frame()
-  for(id in unique(rain_test$period_id)){
-    period <- rain_test[rain_test$period_id == id, ]
-    
-    rain_periods <- rbind(
-      rain_periods,
-      data.frame(
-        start = min(period$interval_start),
-        end = max(period$time),
-        rain_mm = sum(period$total_rain_mm)
-      )
+# ---- A napi, időjáráshoz illő szöveg kiválasztása --------------------------------
+daily_greeting <- function(target_day, total_mm, day_word, max_prob) {
+  messages <- if (is.finite(total_mm) && total_mm >= 20) {
+    c(
+      "Your motivation called in sick. Your degree didn’t. Get to class — let’s not make this another resit.",
+      "Noah has the ark. You have the U-Bahn. Plan accordingly.",
+      "Vienna’s auditioning for Titanic {day_word}. Bring an umbrella — Rose still isn’t sharing that door.",
+      "You’re a heartthrob {day_word}, but you’re definitely not why the girls are getting wet.",
+      "Skip the toilet paper {day_word}. One step outside and the sky will finish the job.",
+      "John the Baptist has taken over the weather {day_word}. Expect a surprise baptism."
+    )
+  } else if (!is.finite(max_prob) || max_prob > 20) {
+    c(
+      "You’re made of sugar, buttercup. Bring an umbrella.",
+      "Free outdoor showers {day_word}. Towels not included.",
+      "Your hair has plans. The weather has other ideas.",
+      "The sky’s watering Vienna. You’re not a houseplant.",
+      "Take an umbrella. Looking dramatic in the rain is optional.",
+      "It’s raining men! Hallelujah! It’s raining men! Nope, just water. Bring an umbrella."
+    )
+  } else {
+    c(
+      "The sky is flirting with rain. Don’t get too attached to your hairstyle.",
+      "The forecast is indecisive. Pack an umbrella and feel superior either way.",
+      "Not quite Noah weather. Still worth packing an umbrella.",
+      "The sky might spit {day_word}. Try not to take it personally.",
+      "Sunny {day_word} — allegedly. There’s still a higher chance of rain than of you passing Berger’s class."
     )
   }
-  rain_periods
-  
-  #az esos idoszakok szovegge alakitasa
-  period_lines <- sprintf(
-    "%s-%s: %.1f mm",
-    format(rain_periods$start, "%H:%M", tz = local_timezone),
-    format(rain_periods$end, "%H:%M", tz = local_timezone),
-    rain_periods$rain_mm
-  )
-  cat(period_lines, sep = "\n")
+
+  # A dátum naponta másik mondatot választ; az aznapi újrafuttatás ugyanazt adja.
+  index <- (as.integer(target_day) %% length(messages)) + 1L
+  gsub("{day_word}", day_word, messages[[index]], fixed = TRUE)
 }
 
-#valodi elorejelzes esos idoszakainak feldolgozasa
-if (rain_expected) {
-  rainy_hours$interval_start <- rainy_hours$time - 3600
-  
-  time_gaps <- as.numeric(
-    diff(rainy_hours$time),
-    units = "hours"
-  )
-  rainy_hours$period_id <- cumsum(c(TRUE, time_gaps > 1))
-  
-  rain_periods <- data.frame ()
-  for (id in unique(rainy_hours$period_id)) {
-    period <- rainy_hours[rainy_hours$period_id == id, ]
-    rain_periods <- rbind(
-      rain_periods,
-      data.frame(
-        start = min(period$interval_start),
-        end = max(period$time),
-        rain_mm = sum(period$total_rain_mm)
-      )
+# ---- Main ---------------------------------------------------------------------
+run_check <- function() {
+
+  # 1. Download the forecast (GET request, like the Eurostat example)
+  response <- GET(
+    "https://api.open-meteo.com/v1/forecast",
+    query = list(
+      latitude      = lat,
+      longitude     = lon,
+      hourly        = "precipitation_probability,precipitation,temperature_2m",
+      timezone      = "Europe/Vienna",
+      forecast_days = 2
     )
+  )
+  if (status_code(response) != 200) {
+    stop(glue("Open-Meteo returned status code {status_code(response)}"))
   }
-  
-  period_lines <- sprintf(
-    "%s–%s: %.1f mm",
-    format(rain_periods$start, "%H:%M", tz = local_timezone),
-    format(rain_periods$end, "%H:%M", tz = local_timezone),
-    rain_periods$rain_mm
+  weather <- fromJSON(content(response, as = "text", encoding = "UTF-8"))
+
+  # 2. Process: one row per hour
+  forecast <- tibble(
+    time = ymd_hm(weather$hourly$time, tz = "Europe/Vienna"),
+    prob = weather$hourly$precipitation_probability,
+    mm   = weather$hourly$precipitation,
+    temp = weather$hourly$temperature_2m
   )
-  
-  rain_details <- paste(period_lines, collapse = "\n")
-} else {
-  rain_details <- "Nincs felsorolható esős időszak."
-}
 
-# Az összefoglaló és a részletek megjelenítése
-cat(rain_summary, rain_details, sep = "\n\n")
+  # The check runs in the morning, so it looks at today. If it runs after 18:00
+  # (e.g. a manual test in the evening), it looks at tomorrow instead.
+  now <- with_tz(Sys.time(), "Europe/Vienna")
+  today <- as.Date(now, tz = "Europe/Vienna")
+  target_day <- if (hour(now) < 18) today else today + 1
 
-# Az email tárgyának és szövegének összeállítása
-email_subject <- paste(
-  "Esőjelentés",
-  location_name,
-  target_date,
-  sep = " | "
-)
+  day <- forecast |>
+    filter(as.Date(time, tz = "Europe/Vienna") == target_day,
+           hour(time) %in% day_hours)
 
-email_body <- paste(
-  c(
-    paste("Előrejelzés dátuma:", target_date),
-    rain_summary,
-    if (rain_expected) rain_details
-  ),
-  collapse = "\n\n"
-)
+  # Success check: did we get usable data?
+  if (nrow(day) < 10 || all(is.na(day$prob))) {
+    stop(glue("Forecast for {target_day} is missing or empty ({nrow(day)} rows)"))
+  }
 
-# Az email előnézetének megjelenítése
-cat(email_subject, email_body, sep = "\n\n")
+  # 3. Save the forecast, so it can later be compared with the actual weather
+  forecast |>
+    mutate(run_time = now, target_day = target_day) |>
+    write_csv(history_file, append = file.exists(history_file))
 
-# A sortörések előkészítése a formázott emailhez
-email_body_md <- gsub("\n", "  \n", email_body, fixed = TRUE)
+  # 4. Find rain windows: consecutive hours above the thresholds
+  day <- day |>
+    mutate(rain  = coalesce(prob >= prob_threshold, FALSE) | coalesce(mm >= mm_threshold, FALSE),
+           block = cumsum(rain != lag(rain, default = FALSE)))
 
-# Az emailüzenet létrehozása
-email_message <- blastula::compose_email(
-  body = blastula::md(email_body_md)
-)
+  # Esőjelzés nélkül csak naplózunk; email nem készül.
+  if (!any(day$rain)) {
+    write_log(glue("OK  {target_day}: no rain expected (max {max(day$prob, na.rm = TRUE)}%), no email"))
+    return(invisible(NULL))
+  }
 
-# Az email előnézetének megnyitása interaktív használat esetén
-if (interactive()) {
-  print(email_message)
-}
+  windows <- day |>
+    filter(rain) |>
+    group_by(block) |>
+    summarise(from     = min(time),
+              to       = max(time) + hours(1),
+              max_prob = max(prob),
+              total_mm = sum(mm))
 
-# A címzettek beolvasása vesszővel elválasztott listából
-email_recipients <- trimws(
-  strsplit(Sys.getenv("EMAIL_TO"), ",", fixed = TRUE)[[1]]
-)
+  # 5. A napi angol szöveg és az esős időszakok összeállítása
+  day_word <- if (target_day > today) "tomorrow" else "today"
+  greeting <- daily_greeting(target_day, sum(day$mm), day_word,
+                             max(day$prob, na.rm = TRUE))
 
-# Az email elküldése vagy tesztüzem jelzése
-if (dry_run) {
-  message("Tesztüzem: az email nem lett elküldve.")
-} else {
-  blastula::smtp_send(
-    email = email_message,
-    to = email_recipients,
-    from = Sys.getenv("SMTP_USER"),
-    subject = email_subject,
-    credentials = blastula::creds_envvar(
-      user = Sys.getenv("SMTP_USER"),
-      pass_envvar = "SMTP_PASSWORD",
-      provider = "gmail"
-    )
+  window_lines <- windows |>
+    mutate(line = glue("- **{format(from, '%H:%M')}–{format(to, '%H:%M')}**: ",
+                       "up to {max_prob}% chance, {round(total_mm, 1)} mm")) |>
+    pull(line) |>
+    paste(collapse = "\n")
+
+  plot <- ggplot(day, aes(x = time, y = prob, fill = rain)) +
+    geom_col() +
+    geom_hline(yintercept = prob_threshold, linetype = "dashed") +
+    scale_fill_manual(values = c(`FALSE` = "grey70", `TRUE` = "steelblue"), guide = "none") +
+    scale_x_datetime(date_labels = "%H:%M") +
+    labs(x = NULL, y = "Rain probability (%)",
+         title = glue("Vienna, {format(target_day, '%Y-%m-%d')}")) +
+    theme_minimal()
+
+  text <- glue(
+    "## {greeting}\n\n",
+    "Rain forecast for Vienna on **{format(target_day, '%Y-%m-%d')}**:\n\n",
+    "{window_lines}\n\n",
+    "Temperature during the day: {round(min(day$temp))}–{round(max(day$temp))} °C."
   )
-  
-  message("A Gmail SMTP-szervere elfogadta a levelet.")
+  # add_ggplot() turns the plot into an HTML image that goes into the email body
+  plot_html <- add_ggplot(plot_object = plot, width = 7, height = 3)
+
+  email <- compose_email(
+    body   = md(c(text, plot_html)),
+    footer = md(glue("Forecast: Open-Meteo, checked {format(now, '%d.%m.%Y %H:%M')}"))
+  )
+
+  smtp_send(
+    email,
+    to          = recipients,
+    from        = sender,
+    subject     = glue("{greeting} | Vienna | {format(target_day, '%Y-%m-%d')}"),
+    credentials = get_credentials()
+  )
+
+  write_log(glue("OK  {target_day}: rain expected, email sent ({nrow(windows)} window(s))"))
 }
+
+# ---- Run with a success check ---------------------------------------------------
+tryCatch(
+  run_check(),
+  error = function(e) {
+    write_log(glue("ERROR {conditionMessage(e)}"))
+    # try to tell you that the check failed
+    try(smtp_send(
+      compose_email(body = md(glue("The rain check failed:\n\n`{conditionMessage(e)}`"))),
+      to = recipients, from = sender, subject = "Rain check failed",
+      credentials = get_credentials()
+    ))
+    stop(e)   # exit with an error, so Task Scheduler / GitHub shows the run as failed
+  }
+)
