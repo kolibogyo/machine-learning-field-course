@@ -1,8 +1,3 @@
-# weather_alert.R
-# Checks today's weather forecast for Vienna (Open-Meteo API) and sends an
-# email with a rotating greeting and the expected rain times if rain is likely.
-# Runs every morning at 07:00 Vienna time via GitHub Actions
-# (.github/workflows/weather-alert.yml).
 
 library(httr)
 library(jsonlite)
