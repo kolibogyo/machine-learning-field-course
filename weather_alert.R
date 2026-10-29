@@ -48,8 +48,7 @@ daily_greeting <- function(target_day, total_mm, day_word, max_prob) {
     c(
       "You’re made of sugar, buttercup. Bring an umbrella.",
       "Free outdoor showers {day_word}. Towels not included.",
-      "Your hair has plans. The weather has other ideas.",
-      "The sky’s watering Vienna. You’re not a houseplant.",
+      “I ain’t gonna lie to you — it’s going to be a really bad day for you.”,
       "Take an umbrella. Looking dramatic in the rain is optional.",
       "It’s raining men! Hallelujah! It’s raining men! Nope, just water. Bring an umbrella."
     )
