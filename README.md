@@ -1,5 +1,3 @@
 # Machine Learning Field Course
 
-My coursework and assignments for the Machine Learning Field Course.
-
-Practice branch test 
+(https://forms.gle/3dfgerxTMA2FmGhLA)
