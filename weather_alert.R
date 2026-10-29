@@ -70,7 +70,7 @@ daily_greeting <- function(target_day, total_mm, day_word, max_prob) {
 # ---- Main ---------------------------------------------------------------------
 run_check <- function() {
 
-  # 1. Download the forecast (GET request, like the Eurostat example)
+  # 1. Download the forecast (GET request)
   response <- GET(
     "https://api.open-meteo.com/v1/forecast",
     query = list(
