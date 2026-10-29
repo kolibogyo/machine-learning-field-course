@@ -50,4 +50,7 @@ jobs:
 
       # Az időjárásjelentő script elindítása
       - name: Run weather script
-        run: Rscript weather_alert.R
+        run: |
+          Rscript weather_alert.R
+          cat data/rain-alert-log.txt
+      
