@@ -83,3 +83,15 @@ jobs:
         run: |
           Rscript weather_alert.R
           cat data/rain-alert-log.txt
+
+      # Save logs and forecasts after each run
+      - name: Save weather data
+        if: ${{ always() && (github.event_name != 'workflow_dispatch' || !inputs.send_test_email) }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: weather-data-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            data/rain-alert-log.txt
+            data/rain-forecasts.csv
+          if-no-files-found: warn
+          retention-days: 30
